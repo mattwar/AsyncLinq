@@ -460,17 +460,17 @@ namespace AsyncLinq
         /// <summary>
         /// Returns a sequence elements from the source sequence that match the predicate.
         /// </summary>
-        public static IAsyncEnumerator<T> Where<T>(this IAsyncEnumerator<T> source, Func<T, bool> predicate)
+        public static IAsyncEnumerator<TSource> Where<TSource>(this IAsyncEnumerator<TSource> source, Func<TSource, bool> predicate)
         {
-            return new WhereEnumerator<T>(source, predicate);
+            return new WhereEnumerator<TSource>(source, predicate);
         }
 
-        private class WhereEnumerator<T> : IAsyncEnumerator<T>
+        private class WhereEnumerator<TSource> : IAsyncEnumerator<TSource>
         {
-            private readonly IAsyncEnumerator<T> sourceEnumerator;
-            private readonly Func<T, bool> predicate;
+            private readonly IAsyncEnumerator<TSource> sourceEnumerator;
+            private readonly Func<TSource, bool> predicate;
 
-            public WhereEnumerator(IAsyncEnumerator<T> sourceEnumerator, Func<T, bool> predicate)
+            public WhereEnumerator(IAsyncEnumerator<TSource> sourceEnumerator, Func<TSource, bool> predicate)
             {
                 this.sourceEnumerator = sourceEnumerator;
                 this.predicate = predicate;
@@ -483,20 +483,22 @@ namespace AsyncLinq
                 return this.sourceEnumerator.MoveNextAsync();
             }
 
-            public T TryGetNext(out bool success)
+            public TSource TryGetNext(out bool success)
             {
-                var value = this.sourceEnumerator.TryGetNext(out success);
-
-                if (success)
+                while (true)
                 {
-                    success = this.predicate(value);
-                }
-                else
-                {
-                    value = default(T);
-                }
+                    var value = this.sourceEnumerator.TryGetNext(out success);
 
-                return value;
+                    if (success)
+                    {
+                        if (this.predicate(value))
+                        {
+                            return value;
+                        }
+                    }
+
+                    return default(TSource);
+                }
             }
         }
 
