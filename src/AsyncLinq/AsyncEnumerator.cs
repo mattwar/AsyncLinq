@@ -495,6 +495,10 @@ namespace AsyncLinq
                         {
                             return value;
                         }
+                        else
+                        {
+                            continue;
+                        }
                     }
 
                     return default(TSource);
