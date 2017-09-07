@@ -51,8 +51,8 @@
   </Choose>
   <ItemGroup>
     <Compile Include="AsyncLinqTests.cs" />
-    <Compile Include="AsyncText.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TestExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AsyncLinq\AsyncLinq.csproj">

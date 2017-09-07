@@ -156,8 +156,7 @@ namespace AsyncLinq
         private class AsyncWrapper<TSource> : IAsyncEnumerator<TSource>
         {
             internal readonly IEnumerator<TSource> sourceEnumerator;
-            private TSource current;
-            private bool hasCurrent;
+            private bool done;
 
             public AsyncWrapper(IEnumerator<TSource> sourceEnumerator)
             {
@@ -171,36 +170,26 @@ namespace AsyncLinq
 
             public Task<bool> MoveNextAsync()
             {
-                return Task.FromResult(this.MoveNext());
-            }
-
-            private bool MoveNext()
-            {
-                this.hasCurrent = this.sourceEnumerator.MoveNext();
-                if (this.hasCurrent)
-                {
-                    this.current = this.sourceEnumerator.Current;
-                    return true;
-                }
-                else
-                {
-                    this.current = default(TSource);
-                    return false;
-                }
+                return Task.FromResult(!this.done);
             }
 
             public TSource TryGetNext(out bool success)
             {
-                success = this.MoveNext();
-                if (success)
+                if (!this.done)
                 {
-                    this.hasCurrent = false;
-                    return this.current;
+                    if (this.sourceEnumerator.MoveNext())
+                    {
+                        success = true;
+                        return this.sourceEnumerator.Current;
+                    }
+                    else
+                    {
+                        this.done = true;
+                    }
                 }
-                else
-                {
-                    return default(TSource);
-                }
+
+                success = false;
+                return default(TSource);
             }
         }
 
@@ -360,7 +349,7 @@ namespace AsyncLinq
                 }
                 else
                 {
-                    return count++;
+                    count++;
                 }
             }
         }
@@ -385,7 +374,7 @@ namespace AsyncLinq
                 }
                 else if (predicate(value))
                 {
-                    return count++;
+                    count++;
                 }
             }
         }
@@ -718,7 +707,7 @@ namespace AsyncLinq
             private readonly Func<TSource, IAsyncEnumerable<TCollection>> collectionSelector;
             private readonly Func<TSource, TCollection, TResult> resultSelector;
             private TSource current;
-            private IAsyncEnumerator<TCollection> valueEnumerator;
+            private IAsyncEnumerator<TCollection> collectionEnumerator;
 
             public SelectManyEnumerator2(
                 IAsyncEnumerator<TSource> sourceEnumerator, 
@@ -732,10 +721,10 @@ namespace AsyncLinq
 
             public void Dispose()
             {
-                if (this.valueEnumerator != null)
+                if (this.collectionEnumerator != null)
                 {
-                    this.valueEnumerator.Dispose();
-                    this.valueEnumerator = null;
+                    this.collectionEnumerator.Dispose();
+                    this.collectionEnumerator = null;
                 }
 
                 this.sourceEnumerator.Dispose();
@@ -743,40 +732,58 @@ namespace AsyncLinq
 
             public async Task<bool> MoveNextAsync()
             {
-                if (this.valueEnumerator != null)
+                if (this.collectionEnumerator != null)
                 {
-                    this.valueEnumerator.Dispose();
-                    this.valueEnumerator = null;
+                    if (!await this.collectionEnumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        this.collectionEnumerator.Dispose();
+                        this.collectionEnumerator = null;
+                    }
+
+                    // return true regardless so next source element will advance
+                    return true;
                 }
 
                 if (await this.sourceEnumerator.MoveNextAsync().ConfigureAwait(false))
                 {
-                    bool success;
-                    this.current = this.sourceEnumerator.TryGetNext(out success);
-                    if (success)
-                    {
-                        this.valueEnumerator = this.collectionSelector(this.current)?.GetEnumerator();
-                        return true;
-                    }
+                    return true;
                 }
-
-                this.valueEnumerator = null;
-                return false;
+                else
+                {
+                    this.collectionEnumerator = null;
+                    return false;
+                }
             }
 
             public TResult TryGetNext(out bool success)
             {
-                if (this.valueEnumerator != null)
+                while (true)
                 {
-                    var collectionCurrent = this.valueEnumerator.TryGetNext(out success);
+                    if (this.collectionEnumerator != null)
+                    {
+                        var collectionCurrent = this.collectionEnumerator.TryGetNext(out success);
+                        if (success)
+                        {
+                            return this.resultSelector(this.current, collectionCurrent);
+                        }
+                        else
+                        {
+                            return default(TResult);
+                        }
+                    }
+
+                    this.current = this.sourceEnumerator.TryGetNext(out success);
                     if (success)
                     {
-                        return this.resultSelector(this.current, collectionCurrent);
+                        this.collectionEnumerator = this.collectionSelector(this.current)?.GetEnumerator();
+                        continue;
+                    }
+                    else
+                    {
+                        success = false;
+                        return default(TResult);
                     }
                 }
-
-                success = false;
-                return default(TResult);
             }
         }
 
@@ -806,8 +813,8 @@ namespace AsyncLinq
             private readonly IAsyncEnumerator<TSource> sourceEnumerator;
             private readonly Func<TSource, Task<IEnumerable<TCollection>>> collectionSelector;
             private readonly Func<TSource, TCollection, TResult> resultSelector;
-            private TSource current;
-            private IEnumerator<TCollection> valueEnumerator;
+            private TSource sourceCurrent;
+            private IEnumerator<TCollection> collectionEnumerator;
 
             public SelectManyEnumerator3(
                 IAsyncEnumerator<TSource> sourceEnumerator,
@@ -821,10 +828,10 @@ namespace AsyncLinq
 
             public void Dispose()
             {
-                if (this.valueEnumerator != null)
+                if (this.collectionEnumerator != null)
                 {
-                    this.valueEnumerator.Dispose();
-                    this.valueEnumerator = null;
+                    this.collectionEnumerator.Dispose();
+                    this.collectionEnumerator = null;
                 }
 
                 this.sourceEnumerator.Dispose();
@@ -832,39 +839,46 @@ namespace AsyncLinq
 
             public async Task<bool> MoveNextAsync()
             {
-                if (this.valueEnumerator != null)
-                {
-                    this.valueEnumerator.Dispose();
-                    this.valueEnumerator = null;
-                }
-
-                if (await this.sourceEnumerator.MoveNextAsync().ConfigureAwait(false))
+                while (true)
                 {
                     bool success;
-                    this.current = this.sourceEnumerator.TryGetNext(out success);
+                    this.sourceCurrent = this.sourceEnumerator.TryGetNext(out success);
                     if (success)
                     {
-                        this.valueEnumerator = (await this.collectionSelector(this.current).ConfigureAwait(false)).GetEnumerator();
+                        this.collectionEnumerator = (await this.collectionSelector(this.sourceCurrent).ConfigureAwait(false)).GetEnumerator();
                         return true;
                     }
-                }
 
-                this.valueEnumerator = null;
-                return false;
+                    if (await this.sourceEnumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
             }
 
             public TResult TryGetNext(out bool success)
             {
-                if (this.valueEnumerator != null && this.valueEnumerator.MoveNext())
+                if (this.collectionEnumerator != null)
                 {
-                    success = true;
-                    return this.resultSelector(this.current, this.valueEnumerator.Current);
+                    if (this.collectionEnumerator.MoveNext())
+                    {
+                        success = true;
+                        return this.resultSelector(this.sourceCurrent, this.collectionEnumerator.Current);
+                    }
+                    else
+                    {
+                        this.collectionEnumerator.Dispose();
+                        this.collectionEnumerator = null;
+                    }
                 }
-                else
-                {
-                    success = false;
-                    return default(TResult);
-                }
+
+                // return false so we get back to MoveNextAsync to await on result of next source element
+                success = false;
+                return default(TResult);
             }
         }
 
@@ -1042,7 +1056,7 @@ namespace AsyncLinq
         {
             private readonly IAsyncEnumerator<TSource> source;
             private readonly Func<TSource, bool> predicate;
-            private bool done;
+            private bool skipped;
 
             public SkipWhileEnumerator(IAsyncEnumerator<TSource> source, Func<TSource, bool> predicate)
             {
@@ -1057,7 +1071,7 @@ namespace AsyncLinq
 
             public TSource TryGetNext(out bool success)
             {
-                while (!this.done)
+                while (!this.skipped)
                 {
                     var result = this.source.TryGetNext(out success);
                     if (success)
@@ -1068,9 +1082,14 @@ namespace AsyncLinq
                         }
                         else
                         {
-                            this.done = true;
+                            // this is first element that does not match
+                            this.skipped = true;
                             return result;
                         }
+                    }
+                    else
+                    {
+                        break;
                     }
                 }
 
